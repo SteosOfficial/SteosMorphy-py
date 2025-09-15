@@ -1,0 +1,1 @@
+from .steosmorphy_lib import MorphAnalyzer
