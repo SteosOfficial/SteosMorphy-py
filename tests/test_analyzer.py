@@ -1,6 +1,6 @@
 # tests/test_analyzer.py
 import pytest
-from steosmorphy import MorphAnalyzer
+from steosmorphy import MorphAnalyzer, AnalyzerConfig
 
 # Фикстура Pytest: создает один экземпляр анализатора для всех тестов в этом файле.
 
@@ -10,7 +10,7 @@ def analyzer():
     """Инициализирует и возвращает экземпляр MorphAnalyzer."""
     print("\nИнициализация анализатора для тестов...")
     try:
-        instance = MorphAnalyzer()
+        instance = MorphAnalyzer(AnalyzerConfig())
         print("Инициализация завершена.")
         return instance
     except Exception as e:

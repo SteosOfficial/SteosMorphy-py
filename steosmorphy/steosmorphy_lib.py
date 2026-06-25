@@ -2,11 +2,20 @@
 import ctypes
 import json
 import os
-import platform
+from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
-import zstandard as zstd  
-from tqdm import tqdm  
+import zstandard as zstd
+from tqdm import tqdm
+from typing import Optional
+
+
+class _AnalyzerConfigC(ctypes.Structure):
+    """Зеркало C-структуры AnalyzerConfig_C из cgo preamble (main.go)."""
+    _fields_ = [
+        ("capacity", ctypes.c_uint32),
+        ("num_shards", ctypes.c_uint32),
+    ]
 
 # Вспомогательная функция для получения пути к кэшу
 
@@ -65,6 +74,34 @@ class AnalysisResult:
         return f"<AnalysisResult: {len(self.parses)} parses, {len(self.forms)} forms>"
 
 
+@dataclass
+class ShardConfig:
+    total_capacity: int
+    num_shards: int
+
+    def __post_init__(self):
+        if self.total_capacity == 0:
+            return
+        if self.total_capacity < 0:
+            raise ValueError(f"shard size must be >= 0, got {self.total_capacity}")
+        if self.num_shards < 1 or (self.num_shards & (self.num_shards - 1) != 0) or self.total_capacity < self.num_shards:
+            raise ValueError(f"num_shards must be greater than 0 and less than shard_size, got: {self.num_shards}")
+
+
+@dataclass
+class AnalyzerConfig:
+    cache: Optional[ShardConfig] = None
+
+    def __post_init__(self):
+        if self.cache is None:
+            self.cache = ShardConfig(total_capacity=0, num_shards=0)
+
+    def to_c_struct(self) -> _AnalyzerConfigC:
+        total_capacity = self.cache.total_capacity
+        num_shards = self.cache.num_shards
+        return _AnalyzerConfigC(capacity=total_capacity, num_shards=num_shards)
+
+
 class MorphAnalyzer:
     """
     Python-обертка для высокопроизводительного морфологического анализатора,
@@ -78,10 +115,16 @@ class MorphAnalyzer:
             cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self):
+    def __init__(self, config: AnalyzerConfig) -> None:
         if self._initialized:
             return
+        self._config = config
+        self._load_library()
+        self._initialized = True
 
+    def _load_library(self):
+        # Определяем имя библиотеки в зависимости от ОС
+        import platform
         system = platform.system()
         if system == 'Windows':
             lib_name = 'steosmorphy.dll'
@@ -90,7 +133,7 @@ class MorphAnalyzer:
         elif system == 'Darwin':
             lib_name = 'steosmorphy.dylib'
         else:
-            raise RuntimeError(f"Неподдерживаемая ОС: {system}")
+            raise RuntimeError(f"Unsupported OS: {system}")
 
         cache_dir = get_cache_dir()
         uncompressed_dict_path = cache_dir / "morph.dawg"
@@ -108,25 +151,56 @@ class MorphAnalyzer:
             print("Словарь успешно распакован.")
 
         with resources.path('steosmorphy', lib_name) as lib_path:
-
             self.lib = ctypes.CDLL(str(lib_path))
-            self.lib.Init.argtypes = [ctypes.c_char_p]
+
+            self.lib.Init.argtypes = [ctypes.c_char_p, _AnalyzerConfigC]
             self.lib.Init.restype = ctypes.c_void_p
-            self.lib.Init.restype = ctypes.c_int
-            self.lib.Init.restype = None
+
             self.lib.AnalyzeJson.argtypes = [ctypes.c_char_p]
-            # Важно: restype должен быть void_p, так как мы получаем указатель
             self.lib.AnalyzeJson.restype = ctypes.c_void_p
+
             self.lib.ParseListJson.argtypes = [ctypes.c_char_p]
             self.lib.ParseListJson.restype = ctypes.c_void_p
+
             self.lib.InflectListJson.argtypes = [ctypes.c_char_p]
             self.lib.InflectListJson.restype = ctypes.c_void_p
+
             self.lib.FreeCString.argtypes = [ctypes.c_void_p]
             self.lib.FreeCString.restype = None
 
-            self.lib.Init(str(uncompressed_dict_path).encode('utf-8'))
+            self.lib.ResizeShard.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
+            self.lib.ResizeShard.restype = ctypes.c_void_p
 
-        self._initialized = True
+            self.lib.Delete.argtypes = []
+            self.lib.Delete.restype = None
+
+            config_c = self._config.to_c_struct()
+
+            self.lib.Init(
+                str(uncompressed_dict_path).encode('utf-8'),
+                config_c
+            )
+
+    def apply_config(self, config: AnalyzerConfig) -> None:
+        """Выполняет модификацию конфигурации анализатора"""
+        def resize_cache(total_capacity: int, num_shards: int) -> None:
+            err_ptr = self.lib.ResizeShard(
+                ctypes.c_uint32(total_capacity), ctypes.c_uint32(num_shards)
+            )
+            if err_ptr:
+                err_msg = ctypes.cast(err_ptr, ctypes.c_char_p).value.decode('utf-8')
+                self.lib.FreeCString(err_ptr)
+                raise RuntimeError(f"ResizeShard failed: {err_msg}")
+
+        resize_cache(config.cache.total_capacity, config.cache.num_shards)
+
+    def destroy(self) -> None:
+        """Явно уничтожает синглтон: сбрасывает Go-side globalAnalyzer и Python-обёртку."""
+        if hasattr(self, 'lib'):
+            self.lib.Delete()
+            del self.lib
+        self._initialized = False
+        MorphAnalyzer._instance = None
 
     def _decompress_file(self, compressed_path: Path, target_path: Path):
         """Распаковывает файл .zst с прогресс-баром."""
@@ -171,10 +245,16 @@ class MorphAnalyzer:
         raw_data = json.loads(json_string)
 
         # Преобразуем словари из 'parses' в объекты Parsed
-        parses_list = [Parsed(p_dict) for p_dict in raw_data.get('parses', [])]
+        parses = raw_data.get('parses', [])
+        if parses is None:
+            parses = []
+        parses_list = [Parsed(p_dict) for p_dict in parses]
 
         # Преобразуем словари из 'forms' в объекты Parsed
-        forms_list = [Parsed(f_dict) for f_dict in raw_data.get('forms', [])]
+        forms = raw_data.get('forms', [])
+        if forms is None:
+            forms = []
+        forms_list = [Parsed(f_dict) for f_dict in forms]
 
         # Возвращаем единый объект-контейнер
         return AnalysisResult(parses=parses_list, forms=forms_list)

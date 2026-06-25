@@ -1,7 +1,7 @@
 # tests/test_benchmark.py
 import pytest
 import time
-from steosmorphy import MorphAnalyzer
+from steosmorphy import MorphAnalyzer, AnalyzerConfig
 
 # --- Фикстура для подготовки данных ---
 
@@ -12,7 +12,7 @@ def analyzer_instance():
     Фикстура, которая создает ОДИН экземпляр анализатора для всей тестовой сессии.
     """
     print("\n[LOAD TEST] Инициализация анализатора...")
-    return MorphAnalyzer()
+    return MorphAnalyzer(AnalyzerConfig())
 
 # --- Нагрузочный тест  ---
 
@@ -33,7 +33,7 @@ def test_load_performance_sequential(analyzer_instance: MorphAnalyzer, num_itera
     start_time = time.perf_counter()
 
     for _ in range(num_iterations):
-        analyzer.analyze("слово")
+        analyzer.analyze("междисциплинарный")
 
     end_time = time.perf_counter()
     duration = end_time - start_time
