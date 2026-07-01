@@ -1,3 +1,5 @@
+from build.lib.steosmorphy.steosmorphy_lib import ShardConfig
+
 # steosmorphy: Руководство пользователя
 
 **steosmorphy** — это высокопроизводительный морфологический анализатор для русского языка, предоставляющий Python-интерфейс к ядру, написанному на Go.
@@ -60,17 +62,20 @@ pip install steosmorphy
 Использовать библиотеку очень просто.
 
 ```python
-from steosmorphy import MorphAnalyzer
+from steosmorphy import MorphAnalyzer, AnalyzerConfig, ShardConfig
+# 1. Создаём конфигурацию анализатора
+shard = ShardConfig(total_capacity=1000, num_shards=8) # Датакласс, реализующий поля структуры кэша
+config = AnalyzerConfig(cache=shard)
 
-# 1. Инициализируем анализатор.
+# 2. Инициализируем анализатор.
 # Словарь загружается автоматически при первом создании объекта.
-analyzer = MorphAnalyzer()
+analyzer = MorphAnalyzer(config)
 
-# 2. Анализируем слово
+# 3. Анализируем слово
 word = "стали"
 result = analyzer.analyze(word)
 
-# 3. Работаем с результатом
+# 4. Работаем с результатом
 print(f"Варианты разбора для слова '{word}':")
 
 # `result.parses` - это список всех возможных разборов
