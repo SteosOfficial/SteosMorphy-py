@@ -62,7 +62,7 @@ pip install steosmorphy
 Использовать библиотеку очень просто.
 
 ```python
-from steosmorphy import MorphAnalyzer
+from steosmorphy import MorphAnalyzer, AnalyzerConfig, ShardConfig
 # 1. Создаём конфигурацию анализатора
 shard = ShardConfig(total_capacity=1000, num_shards=8) # Датакласс, реализующий поля структуры кэша
 config = AnalyzerConfig(cache=shard)
