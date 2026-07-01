@@ -1,6 +1,7 @@
 import os
 import platform
 from setuptools import setup, find_packages
+from setuptools.dist import Distribution
 
 try:  # setuptools >= 70
     from setuptools.command.bdist_wheel import bdist_wheel as _bdist_wheel
@@ -21,10 +22,18 @@ if TARGET not in _PLATFORMS:
 _bin_glob, _plat_tag = _PLATFORMS[TARGET]
 
 
+class BinaryDistribution(Distribution):
+    """Пакет несёт нативный бинарь → дистрибутив платформенный, не pure."""
+    def has_ext_modules(self):
+        return True
+
+    def is_pure(self):
+        return False
+
+
 class BinaryWheel(_bdist_wheel):
     def finalize_options(self):
         super().finalize_options()
-        self.root_is_pure = False
 
     def get_tag(self):
         # Go-бинарь грузится через ctypes → не зависит от ABI CPython,
@@ -42,6 +51,7 @@ setup(
     long_description_content_type='text/markdown',
     url='https://github.com/SteosOfficial/SteosMorphy-py',
     packages=find_packages(),
+    distclass=BinaryDistribution,
     cmdclass={"bdist_wheel": BinaryWheel},
     package_data={'steosmorphy': ['*.dawg', '*.dawg.zst', _bin_glob]},
     zip_safe=False,
