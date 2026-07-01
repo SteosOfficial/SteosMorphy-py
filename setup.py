@@ -1,6 +1,5 @@
 import os
 import platform
-import wheel
 from setuptools import setup, find_packages
 
 try:  # setuptools >= 70
