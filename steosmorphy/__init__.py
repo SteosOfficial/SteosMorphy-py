@@ -1,1 +1,1 @@
-from .steosmorphy_lib import MorphAnalyzer, AnalyzerConfig
+from .steosmorphy_lib import MorphAnalyzer, AnalyzerConfig, ShardConfig
